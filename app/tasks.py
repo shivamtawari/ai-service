@@ -132,7 +132,9 @@ def train_and_register_model(self, request_dict: dict, model_run_name: str | Non
         return {"status": "completed"}
         
     except Exception as e:
-        logger.exception(f"Training failed: {e}")
+        # Preserve the original exception and traceback in both worker logs and
+        # Celery's retry/final-failure result.
+        logger.error("Training failed: %s", e, exc_info=True)
         from models.mask2former import TrainingCancelled
         
         if isinstance(e, TrainingCancelled):
