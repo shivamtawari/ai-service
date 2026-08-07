@@ -64,7 +64,7 @@ geco = { git = "https://github.com/robertleist/GeCo.git" }
 # conflicting URLs for iquana-toolbox. Once the migration needs local toolbox
 # edits too, promote both to a uv workspace so path sources stay consistent.
 iquana-service-core = { path = "../iquana-service-core", editable = true }
-iquana-toolbox = { git = "https://github.com/Iquana-tool/iquana-toolbox.git" }
+iquana-toolbox = { path = "../iquana-toolbox", editable = true }
 # For a fully offline / pushed setup, swap service-core to git as well:
 # iquana-service-core = { git = "https://github.com/Iquana-tool/iquana-service-core.git" }
 

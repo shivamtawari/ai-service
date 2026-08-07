@@ -7,6 +7,21 @@ from iquana_toolbox.schemas.training import InstanceSegmentationTrainingRequest
 from app.state import MODEL_REGISTRY
 
 
+def _declares_instance_segmentation(tags: dict) -> bool:
+    """Match the canonical ``instance_segmentation`` task tag.
+
+    ``iquana_toolbox.mlflow.MLFlowModelRegistry._model_info_tags`` always writes the
+    underscore spelling to both ``task`` and ``model_task`` (matching the toolbox's
+    own ``parse_tags_to_model_info``); normalize so a hyphenated spelling written by
+    an older/other caller is still recognized.
+    """
+    for key in ("task", "model_task"):
+        value = tags.get(key)
+        if isinstance(value, str) and value.strip().lower().replace("-", "_") == "instance_segmentation":
+            return True
+    return False
+
+
 def validate_model(request: Union[InstanceSegmentationRequest, InstanceSegmentationTrainingRequest]):
     """Validate that the requested model exists and is usable for the request.
 
@@ -22,14 +37,7 @@ def validate_model(request: Union[InstanceSegmentationRequest, InstanceSegmentat
                             detail=f"Model '{request.model_registry_key}' is not registered.")
     tags = registered_model.tags or {}
 
-    # Accept the legacy single ``task`` tag and the new per-task boolean tag
-    # (``task.instance-segmentation`` == "true") so this keeps working across the
-    # tag-encoding migration.
-    is_instance_seg = (
-        tags.get("task") == "instance-segmentation"
-        or str(tags.get("task.instance-segmentation", "")).lower() == "true"
-    )
-    if not is_instance_seg:
+    if not _declares_instance_segmentation(tags):
         raise HTTPException(status_code=400,
                             detail=f"Model {request.model_registry_key} is not an instance segmentation model.")
 

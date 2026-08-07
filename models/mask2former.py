@@ -24,7 +24,6 @@ from models.base import CapabilityModel, InstanceSegmentation
 from models.mask2former_dataset import (
     INSTANCE_IGNORE_INDEX,
     CocoInstanceDataset,
-    CocoTrainingDataError,
     LabelMapping,
 )
 
@@ -230,9 +229,11 @@ class Mask2Former(InstanceSegmentation, CapabilityModel):
         )
         requested_label_id = int(request.label.id) if request.label is not None else None
 
-        contours: list[Contour] = []
+        predictions = []
         for segment in processed["segments_info"]:
             score = float(segment.get("score", 1.0))
+            if score < threshold:
+                continue
             try:
                 raw_model_label_id = segment["label_id"]
                 if (
@@ -246,22 +247,66 @@ class Mask2Former(InstanceSegmentation, CapabilityModel):
                 raise RuntimeError(
                     "Mask2Former prediction referenced an unknown model class index."
                 ) from exc
-            if requested_label_id is not None and database_label_id != requested_label_id:
-                continue
-            if score < threshold:
-                continue
-            binary_mask = (segmentation == segment["id"]).astype(np.uint8)
+            binary_mask = (segmentation == segment["id"])
             if not np.any(binary_mask):
                 continue
-            contour = Contour.from_binary_mask(
-                binary_mask=binary_mask,
-                only_return_biggest_contour=True,
-                confidence=score,
+            predictions.append({
+                "id": segment["id"],
+                "label_id": database_label_id,
+                "score": score,
+                "binary_mask": binary_mask,
+            })
+
+        if self._label_mapping.hierarchy_version == "exclusive_hierarchy_v1" and self._label_mapping.label_to_parent:
+            from models.hierarchy_decoder import decode_exclusive_hierarchy
+            predictions = decode_exclusive_hierarchy(
+                predictions, 
+                self._label_mapping.label_to_parent, 
+                containment_threshold=0.5
+            )
+
+        contours: list[Contour] = []
+        contour_by_prediction_id = {}
+        is_hierarchical = self._label_mapping.hierarchy_version == "exclusive_hierarchy_v1"
+        for p in predictions:
+            if requested_label_id is not None and p["label_id"] != requested_label_id:
+                continue
+            returned_contours = Contour.from_binary_mask(
+                binary_mask=p["binary_mask"].astype(np.uint8),
+                only_return_biggest_contour=not is_hierarchical,
+                confidence=p["score"],
                 added_by=request.model_registry_key,
             )
-            if contour is not None:
-                contour.label_id = database_label_id
-                contours.append(contour)
+            if not isinstance(returned_contours, list):
+                returned_contours = [returned_contours] if returned_contours is not None else []
+                
+            for c in returned_contours:
+                c.label_id = p["label_id"]
+                
+            contour_by_prediction_id[p["id"]] = returned_contours
+
+        # Build relation tree for backend persistence
+        if self._label_mapping.hierarchy_version == "exclusive_hierarchy_v1":
+            for p in predictions:
+                child_contours = contour_by_prediction_id.get(p["id"], [])
+                parent_id = p.get("parent_prediction_id")
+                if child_contours and parent_id is not None:
+                    parent_contours = contour_by_prediction_id.get(parent_id, [])
+                    if parent_contours:
+                        # Attach all disjoint pieces of this child to the first (arbitrary) piece of the parent
+                        parent_contours[0].children.extend(child_contours)
+            # Only return roots (or nodes whose parents were filtered out) so backend can persist top-down
+            contours = []
+            for p in predictions:
+                if p["id"] in contour_by_prediction_id and (
+                    p.get("parent_prediction_id") is None or p["parent_prediction_id"] not in contour_by_prediction_id
+                ):
+                    contours.extend(contour_by_prediction_id[p["id"]])
+        else:
+            contours = []
+            for p in predictions:
+                contours.extend(contour_by_prediction_id.get(p["id"], []))
+
         return contours
 
     def train(self, request: InstanceSegmentationTrainingRequest, **kwargs: Any) -> None:
@@ -271,6 +316,16 @@ class Mask2Former(InstanceSegmentation, CapabilityModel):
         dataset = CocoInstanceDataset(
             request.annotation_file_url, request.image_folder_path, label_mapping
         )
+        if getattr(dataset, "label_parent_ids", None) is not None:
+            label_mapping = label_mapping.with_hierarchy(
+                dataset.label_parent_ids,
+                dataset.hierarchy_version
+            )
+            self.model_info.target_encoding = dataset.hierarchy_version
+        else:
+            self.model_info.target_encoding = None
+        
+        self._label_mapping = label_mapping
         self._configure_trainable_head(label_mapping)
         if self._model is None or self._processor is None:
             raise RuntimeError("Mask2Former model or processor failed to initialize.")

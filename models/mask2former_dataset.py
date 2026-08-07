@@ -29,6 +29,8 @@ class LabelMapping:
     database_to_model: dict[int, int]
     model_to_database: dict[int, int]
     id2label: dict[int, str]
+    label_to_parent: dict[int, int | None] | None = None
+    hierarchy_version: str | None = None
 
     @classmethod
     def from_selected_labels(cls, labels: Sequence[Any]) -> "LabelMapping":
@@ -52,6 +54,24 @@ class LabelMapping:
                 for database_id, model_index in database_to_model.items()
             },
         )
+    
+    def with_hierarchy(
+        self,
+        label_parent_ids: dict[str, int | None],
+        hierarchy_version: str,
+    ) -> "LabelMapping":
+        """Return a new LabelMapping enriched with hierarchy information."""
+        label_to_parent = {}
+        for lbl_str, parent_id in label_parent_ids.items():
+            label_to_parent[int(lbl_str)] = int(parent_id) if parent_id is not None else None
+
+        return LabelMapping(
+            database_to_model=self.database_to_model,
+            model_to_database=self.model_to_database,
+            id2label=self.id2label,
+            label_to_parent=label_to_parent,
+            hierarchy_version=hierarchy_version,
+        )
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "LabelMapping":
@@ -69,14 +89,21 @@ class LabelMapping:
                 int(model_index): str(label_name)
                 for model_index, label_name in payload["id2label"].items()
             },
+            label_to_parent={
+                int(label_id): (int(parent_id) if parent_id is not None else None)
+                for label_id, parent_id in payload["label_to_parent"].items()
+            } if payload.get("label_to_parent") is not None else None,
+            hierarchy_version=payload.get("hierarchy_version"),
         )
 
-    def to_dict(self) -> dict[str, dict[str, int | str]]:
+    def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe representation suitable for an MLflow artifact."""
         return {
             "database_to_model": self.database_to_model,
             "model_to_database": self.model_to_database,
             "id2label": self.id2label,
+            "label_to_parent": self.label_to_parent,
+            "hierarchy_version": self.hierarchy_version,
         }
 
 
@@ -124,10 +151,9 @@ def _decode_segmentation(segmentation: Any, height: int, width: int) -> np.ndarr
 class CocoInstanceDataset(Dataset[CocoSample]):
     """Validated selected-label COCO dataset for Mask2Former.
 
-    Parent contours are excluded by the gateway's ``contour_selection='leaves'``
-    export. If independent leaf annotations overlap, their stable COCO order is
-    used: later annotations own overlapping pixels because Mask2Former receives a
-    single instance-ID map rather than overlapping instance targets.
+    parent contours are excluded by the gateway's old exporter.
+    The new exclusive hierarchy exporter guarantees mutually exclusive pixels
+    across all instances.
     """
 
     def __init__(
@@ -154,6 +180,16 @@ class CocoInstanceDataset(Dataset[CocoSample]):
         annotations = coco.get("annotations")
         if not all(isinstance(value, list) for value in (categories, images, annotations)):
             raise CocoTrainingDataError("COCO data must contain images, annotations, and categories lists.")
+        
+        self.hierarchy_version = coco.get("target_encoding")
+        if self.hierarchy_version != "exclusive_hierarchy_v1":
+            raise CocoTrainingDataError("Dataset is not exported in exclusive_hierarchy_v1 format.")
+        
+        hierarchy = coco.get("hierarchy")
+        if not isinstance(hierarchy, dict) or not isinstance(hierarchy.get("label_parent_ids"), dict):
+            raise CocoTrainingDataError("Dataset missing exclusive hierarchy sidecar.")
+        self.label_parent_ids = hierarchy["label_parent_ids"]
+
         category_ids = {category.get("id") for category in categories if isinstance(category, dict)}
         missing_categories = selected_ids.difference(category_ids)
         if missing_categories:
@@ -217,6 +253,15 @@ class CocoInstanceDataset(Dataset[CocoSample]):
             foreground = _decode_segmentation(annotation.get("segmentation"), height, width)
             if not np.any(foreground):
                 continue
+            
+            # Verify mutually exclusive instances
+            overlap = instance_mask[foreground > 0] != INSTANCE_IGNORE_INDEX
+            if np.any(overlap):
+                raise CocoTrainingDataError(
+                    f"Overlapping annotations found in image {image_meta.get('id')}."
+                    " Exclusive hierarchy requires mutually exclusive pixels."
+                )
+
             instance_mask[foreground > 0] = instance_id
             instance_id_to_semantic_id[instance_id] = self._label_mapping.database_to_model[
                 int(annotation["category_id"])

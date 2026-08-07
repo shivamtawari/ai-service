@@ -117,6 +117,17 @@ def _write_two_class_coco_fixture(fixture_path) -> tuple[str, str]:
     annotation_path.write_text(
         json.dumps(
             {
+                "target_encoding": "exclusive_hierarchy_v1",
+                "encoding": "exclusive_hierarchy_v1",
+                "hierarchy": {
+                    "encoding": "exclusive_hierarchy_v1",
+                    "selected_label_ids": [7, 42],
+                    "label_parent_ids": {
+                        "7": None,
+                        "42": 7
+                    },
+                    "annotations": []
+                },
                 "images": images,
                 "categories": [
                     {"id": 7, "name": "cell"},
