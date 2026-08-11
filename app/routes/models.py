@@ -30,36 +30,42 @@ from paths import MLFLOW_URL
 logger = getLogger(__name__)
 
 
-def _registered_names_for_task(registry: MLFlowModelRegistry, task_name: str, *, ready_only: bool) -> list[str]:
-    """Registered model names advertising ``task_name`` (optionally ready only).
-
-    Unions the filter-safe per-task tag with the legacy single ``task`` tag so a
-    model registered before the merge (which has only ``task``) still appears.
-    """
+def _registered_names_for_task(
+    registry: MLFlowModelRegistry,
+    task_name: str,
+    *,
+    ready_only: bool,
+    model_role: str | None = None,
+    dataset_id: int | None = None,
+) -> list[str]:
+    """Registered model names advertising ``task_name`` (optionally filtered by ready status, role, and dataset_id)."""
     task_tag = get_task(task_name).tag_key
     status = {"status": "ready"} if ready_only else {}
     by_name: dict[str, None] = {}
     for tags in ({task_tag: "true", **status}, {"task": task_name, **status}):
+        if model_role:
+            tags["model_role"] = model_role
+        if dataset_id is not None:
+            tags["dataset_id"] = str(dataset_id)
         filter_string = " AND ".join(f"tags.{key} = '{value}'" for key, value in tags.items())
-        for model in registry.client.search_registered_models(filter_string=filter_string):
-            by_name[model.name] = None
+        try:
+            for model in registry.client.search_registered_models(filter_string=filter_string):
+                by_name[model.name] = None
+        except Exception as e:
+            logger.warning(f"Error searching models with filter '{filter_string}': {e}")
     return list(by_name)
 
 
-def _full_model_info(registry_key: str) -> dict:
-    """A model's complete ``model_info`` from its logged artifact metadata.
-
-    ``register_model`` stores ``ModelInfo.model_dump()`` as the logged model's
-    metadata (in the MLmodel file, not the weights), so reading it back is lossless
-    and cheap. Falls back to a minimal stub if an older artifact lacks metadata.
-    """
-    try:
-        info = mlflow.models.get_model_info(f"models:/{registry_key}@latest")
-        if info.metadata:
-            return info.metadata
-        logger.warning("Model '%s' has no artifact metadata; returning stub.", registry_key)
-    except Exception:
-        logger.exception("Failed to read artifact metadata for model '%s'.", registry_key)
+def _full_model_info(registry_key: str, default_alias: str = "active") -> dict:
+    """A model's complete ``model_info`` from its logged artifact metadata."""
+    for target in (f"models:/{registry_key}@{default_alias}", f"models:/{registry_key}@latest"):
+        try:
+            info = mlflow.models.get_model_info(target)
+            if info.metadata:
+                return info.metadata
+        except Exception:
+            continue
+    logger.warning("Model '%s' has no artifact metadata; returning stub.", registry_key)
     return {"registry_key": registry_key, "name": registry_key}
 
 
@@ -70,15 +76,20 @@ def build_task_model_routers(
     router = APIRouter()
     session_router = APIRouter(prefix="/annotation_session", tags=["annotation_session"])
 
-    def _list(ready_only: bool) -> list[dict]:
+    def _list(ready_only: bool, model_role: str | None = None, dataset_id: int | None = None) -> list[dict]:
         mlflow.set_tracking_uri(MLFLOW_URL)
-        names = _registered_names_for_task(registry, task_name, ready_only=ready_only)
+        names = _registered_names_for_task(
+            registry, task_name, ready_only=ready_only, model_role=model_role, dataset_id=dataset_id
+        )
         return [_full_model_info(name) for name in names]
 
     @router.get("/models/all", tags=["models"])
-    async def list_models():
-        """List all models advertising this task."""
-        models = _list(ready_only=False)
+    async def list_models(
+        model_role: str | None = None,
+        dataset_id: int | None = None,
+    ):
+        """List models advertising this task with optional role and dataset filter."""
+        models = _list(ready_only=False, model_role=model_role, dataset_id=dataset_id)
         return {
             "success": True,
             "message": f"Retrieved {len(models)} models.",
@@ -86,14 +97,18 @@ def build_task_model_routers(
         }
 
     @router.get("/models/all/available", tags=["models"])
-    async def list_available_models():
-        """List this task's models that are ready to serve."""
-        models = _list(ready_only=True)
+    async def list_available_models(
+        model_role: str | None = None,
+        dataset_id: int | None = None,
+    ):
+        """List ready models with optional role and dataset filter."""
+        models = _list(ready_only=True, model_role=model_role, dataset_id=dataset_id)
         return {
             "success": True,
             "message": f"Retrieved {len(models)} available models.",
             "result": models,
         }
+
 
     @router.get("/models/{model_registry_key}", tags=["models"])
     async def get_model(model_registry_key: str):
@@ -108,7 +123,10 @@ def build_task_model_routers(
     @session_router.get("/models/{model_registry_key}/preload", tags=["models"])
     async def preload_model(model_registry_key: str, user_id: str):
         """Warm a model into the registry cache at the start of a session."""
-        registry.get_model_by_alias(model_registry_key, "latest")
+        try:
+            registry.get_model_by_alias(model_registry_key, "active")
+        except Exception:
+            registry.get_model_by_alias(model_registry_key, "latest")
         return {
             "success": True,
             "message": f"Preloaded model '{model_registry_key}'.",

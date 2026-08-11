@@ -222,12 +222,12 @@ class CocoInstanceDataset(Dataset[CocoSample]):
         if not self._samples:
             raise CocoTrainingDataError("No training images remain after selected-label filtering.")
 
-        for image, _ in self._samples:
-            image_path = self._image_folder / str(image.get("file_name", ""))
-            if not image_path.is_file():
-                raise CocoTrainingDataError("A COCO training image is missing from the image folder.")
-            if cv2.imread(str(image_path), cv2.IMREAD_COLOR) is None:
-                raise CocoTrainingDataError("A COCO training image could not be decoded.")
+        # Verify per-label coverage across selected labels
+        annotated_labels = {ann.get("category_id") for sample in self._samples for ann in sample[1] if ann.get("category_id") in selected_ids}
+        unannotated = selected_ids - annotated_labels
+        if unannotated:
+            raise CocoTrainingDataError(f"Selected labels have zero annotations in the dataset: {sorted(unannotated)}.")
+
         self._label_mapping = label_mapping
 
     def __len__(self) -> int:
@@ -243,13 +243,15 @@ class CocoInstanceDataset(Dataset[CocoSample]):
             raise CocoTrainingDataError("A COCO training image could not be decoded.")
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         height, width = image_rgb.shape[:2]
-        # Mask2Former expects background to be encoded as the processor's ignore
-        # index, not as an instance with semantic class zero.  This excludes it
-        # before the processor resolves instance IDs to trainable classes.
         instance_mask = np.full((height, width), INSTANCE_IGNORE_INDEX, dtype=np.int32)
         instance_id_to_semantic_id: dict[int, int] = {}
 
         for instance_id, annotation in enumerate(annotations, start=1):
+            if instance_id >= INSTANCE_IGNORE_INDEX:
+                raise CocoTrainingDataError(
+                    f"Image {image_meta.get('id')} has {len(annotations)} instances, which exceeds "
+                    f"the maximum allowed instances per image ({INSTANCE_IGNORE_INDEX - 1})."
+                )
             foreground = _decode_segmentation(annotation.get("segmentation"), height, width)
             if not np.any(foreground):
                 continue
@@ -261,6 +263,7 @@ class CocoInstanceDataset(Dataset[CocoSample]):
                     f"Overlapping annotations found in image {image_meta.get('id')}."
                     " Exclusive hierarchy requires mutually exclusive pixels."
                 )
+
 
             instance_mask[foreground > 0] = instance_id
             instance_id_to_semantic_id[instance_id] = self._label_mapping.database_to_model[

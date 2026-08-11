@@ -35,9 +35,25 @@ async def start_training(
     """
     validate_model(request)
     
-    # 3. Generate the Celery UUID and persist QUEUED before apply_async
+    from iquana_toolbox.schemas.model_info import generate_trained_model_registry_key
+    from iquana_toolbox.mlflow import MLFlowModelRegistry
+    from paths import MLFLOW_URL
+
     task_id = str(uuid.uuid4())
-    
+    output_registry_key = generate_trained_model_registry_key(request.dataset_id, task_id)
+
+    # Resolve base model version/URI; fail submission if resolution fails
+    try:
+        registry = MLFlowModelRegistry(MLFLOW_URL)
+        source_version, source_uri = registry.resolve_base_model_uri(request.model_registry_key, alias="latest")
+    except Exception as e:
+        logger.error("Failed to resolve base model pin for key '%s': %e", request.model_registry_key, e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not resolve base model '{request.model_registry_key}' version/URI: {e}",
+        ) from e
+
+
     try:
         job = TRAINING_JOB_STORE.enqueue(
             task_id=task_id,
@@ -45,9 +61,14 @@ async def start_training(
             user_id=request.user_id,
             model_registry_key=request.model_registry_key,
             run_name=model_run_name,
+            source_model_registry_key=request.model_registry_key,
+            source_model_version=source_version,
+            source_model_uri=source_uri,
+            output_model_registry_key=output_registry_key,
             start_deadline=__import__('datetime').datetime.now(__import__('datetime').timezone.utc) + __import__('datetime').timedelta(minutes=15)
         )
     except TrainingJobStoreError as e:
+
         logger.exception("Failed to persist QUEUED training job in Redis.")
         # 4. Return 503 and dispatch nothing when Redis persistence fails
         raise HTTPException(

@@ -820,3 +820,31 @@ def test_store_rejects_invalid_terminal_ttl_and_empty_normalised_prefix():
         jobs.TrainingJobStore(redis, key_prefix=" ::: ")
     with pytest.raises(ValueError):
         jobs.TrainingJobStore(redis, terminal_ttl_seconds=1.5)
+
+
+def test_training_job_source_and_output_publication_fields(lifecycle):
+    redis, clock, store = lifecycle
+    job = store.enqueue(
+        task_id="task-pub-1",
+        dataset_id=42,
+        user_id=17,
+        model_registry_key="mask2former",
+        source_model_registry_key="mask2former",
+        source_model_version="3",
+        source_model_uri="models:/mask2former/3",
+        output_model_registry_key="mask2former-ds42-task-pub-1",
+    )
+    assert job.source_model_version == "3"
+    assert job.output_model_registry_key == "mask2former-ds42-task-pub-1"
+
+    updated = store.patch(
+        "task-pub-1",
+        {
+            "output_model_version": "1",
+            "output_model_alias": "latest",
+            "output_model_uri": "models:/mask2former-ds42-task-pub-1/1",
+        }
+    )
+    assert updated.output_model_version == "1"
+    assert updated.output_model_alias == "latest"
+    assert updated.output_model_uri == "models:/mask2former-ds42-task-pub-1/1"

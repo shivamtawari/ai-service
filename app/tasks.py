@@ -63,7 +63,8 @@ def train_and_register_model(self, request_dict: dict, model_run_name: str | Non
         registry = MLFlowModelRegistry(MLFLOW_URL)
         request = InstanceSegmentationTrainingRequest.model_validate(request_dict)
         
-        pyfunc_model = registry.get_model_by_version(request.model_registry_key, "latest")
+        source_version = job.source_model_version if (job and getattr(job, "source_model_version", None)) else "latest"
+        pyfunc_model = registry.get_model_by_version(request.model_registry_key, source_version)
         model: InstanceSegmentationModel = pyfunc_model._model_impl.python_model
 
         mlflow.set_tracking_uri(MLFLOW_URL)
@@ -116,20 +117,56 @@ def train_and_register_model(self, request_dict: dict, model_run_name: str | Non
                 return {"status": "cancelled"}
             raise
         
-        model.model_info.tags["dataset_id"] = request.dataset_id
-        model.model_info.tags["user_id"] = request.user_id
-        registry.register_model(model)
-        
-        try:
-            TRAINING_JOB_STORE.mark_succeeded(task_id)
-        except InvalidTrainingJobTransition:
-            job = TRAINING_JOB_STORE.require(task_id)
-            if job.state == JobState.CANCEL_REQUESTED:
-                TRAINING_JOB_STORE.mark_cancelled(task_id)
-                return {"status": "cancelled"}
-            raise
-            
+        job = TRAINING_JOB_STORE.require(task_id)
+        output_key = job.output_model_registry_key or f"mask2former-ds{request.dataset_id}-{task_id}"
+
+        # Construct trained model_info for publication without mutating shared base
+        from iquana_toolbox.schemas.model_info import InstanceSegmentationModelInfo
+        trained_info = InstanceSegmentationModelInfo(
+            registry_key=output_key,
+            name=model_run_name or f"Custom Mask2Former (DS {request.dataset_id})",
+            description=f"Hierarchy-aware instance segmentation trained on dataset {request.dataset_id}",
+            usage_tip=getattr(model.model_info, "usage_tip", None) or "Trained model",
+            model_role="trained",
+            base_model_registry_key=job.source_model_registry_key or request.model_registry_key,
+            base_model_version=job.source_model_version,
+            base_model_uri=job.source_model_uri,
+            training_task_id=task_id,
+            dataset_id=request.dataset_id,
+            trained_by=request.user_id,
+            label_ids=request.selected_label_ids,
+            segmentation_mode="hierarchical" if request.enable_hierarchy else "flat",
+            target_encoding="exclusive_hierarchy_v1" if request.enable_hierarchy else "standard",
+            tags={
+                "dataset_id": str(request.dataset_id),
+                "user_id": str(request.user_id),
+                "training_task_id": task_id,
+            },
+        )
+        model.model_info = trained_info
+
+        pub_result = registry.register_model(model, assign_alias="active")
+        if not pub_result or not pub_result.version or not pub_result.model_uri:
+            raise RuntimeError(f"Model registration for key '{output_key}' did not return a valid publication result.")
+
+        output_version = pub_result.version
+        output_alias = pub_result.alias or "active"
+        output_uri = pub_result.model_uri
+
+        TRAINING_JOB_STORE.patch(
+            task_id,
+            {
+                "output_model_registry_key": output_key,
+                "output_model_version": output_version,
+                "output_model_alias": output_alias,
+                "output_model_uri": output_uri,
+            }
+        )
+
+        TRAINING_JOB_STORE.mark_succeeded(task_id)
         return {"status": "completed"}
+
+
         
     except Exception as e:
         # Preserve the original exception and traceback in both worker logs and

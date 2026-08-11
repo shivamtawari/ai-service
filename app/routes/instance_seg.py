@@ -14,11 +14,19 @@ router = APIRouter()
 session_router = APIRouter(prefix="/annotation_session", tags=["annotation_session"])
 
 
+def _load_instance_model(registry_key: str):
+    """Load trained model by active alias if present, falling back to latest."""
+    try:
+        return MODEL_REGISTRY.get_model_by_alias(registry_key, "active")
+    except Exception:
+        return MODEL_REGISTRY.get_model_by_alias(registry_key, "latest")
+
+
 @router.post("/inference")
 async def inference(request: InstanceSegmentationRequest) -> list[Contour]:
     """Load a model from the MLflow registry and run instance segmentation."""
     validate_model(request)
-    model = MODEL_REGISTRY.get_model_by_alias(request.model_registry_key, "latest")
+    model = _load_instance_model(request.model_registry_key)
     return model.predict(request, {"task": "instance-segmentation"})
 
 
@@ -30,7 +38,7 @@ async def run_inference(request: InstanceSegmentationRequest):
     envelope the annotation gateway expects from every session backend.
     """
     validate_model(request)
-    model = MODEL_REGISTRY.get_model_by_alias(request.model_registry_key, "latest")
+    model = _load_instance_model(request.model_registry_key)
     contours = model.predict(request, {"task": "instance-segmentation"})
     return {
         "success": True,

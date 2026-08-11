@@ -102,10 +102,10 @@ ALLOWED_TRANSITIONS: Mapping[TrainingJobState, frozenset[TrainingJobState]] = {
     TrainingJobState.REGISTERING: frozenset(
         {
             TrainingJobState.SUCCEEDED,
-            TrainingJobState.CANCEL_REQUESTED,
             TrainingJobState.FAILED,
         }
     ),
+
     TrainingJobState.CANCEL_REQUESTED: frozenset({TrainingJobState.CANCELLED}),
     TrainingJobState.SUCCEEDED: frozenset(),
     TrainingJobState.FAILED: frozenset(),
@@ -322,6 +322,15 @@ class TrainingJob(BaseModel):
     loss: float | None = None
     progress: float | None = None
 
+    source_model_registry_key: str | None = None
+    source_model_version: str | None = None
+    source_model_uri: str | None = None
+    output_model_registry_key: str | None = None
+    output_model_version: str | None = None
+    output_model_alias: str | None = None
+    output_model_uri: str | None = None
+
+
     cancellation_requested_at: datetime | None = None
     error: TrainingJobError | None = None
     # This is retained for operators in Redis but excluded from public output.
@@ -419,6 +428,11 @@ class TrainingJobUpdate(BaseModel):
     error_traceback: str | None = None
     run_name: str | None = None
     attempt: int | None = None
+    output_model_registry_key: str | None = None
+    output_model_version: str | None = None
+    output_model_alias: str | None = None
+    output_model_uri: str | None = None
+
 
     @field_validator(
         "started_at",
@@ -671,7 +685,7 @@ end
 if state == "CANCEL_REQUESTED" then
     return {2, payload}
 end
-if state ~= "QUEUED" and state ~= "RUNNING" and state ~= "REGISTERING" then
+if state ~= "QUEUED" and state ~= "RUNNING" then
     return {-2, payload}
 end
 record.cancellation_requested_at = ARGV[1]
@@ -915,6 +929,13 @@ class TrainingJobStore:
         run_name: str | None = None,
         start_deadline: datetime | None = None,
         created_at: datetime | None = None,
+        source_model_registry_key: str | None = None,
+        source_model_version: str | None = None,
+        source_model_uri: str | None = None,
+        output_model_registry_key: str | None = None,
+        output_model_version: str | None = None,
+        output_model_alias: str | None = None,
+        output_model_uri: str | None = None,
     ) -> TrainingJob:
         """Build and atomically persist a queued job before dispatch."""
 
@@ -928,8 +949,16 @@ class TrainingJobStore:
                 run_name=run_name,
                 start_deadline=start_deadline,
                 created_at=created_at,
+                source_model_registry_key=source_model_registry_key,
+                source_model_version=source_model_version,
+                source_model_uri=source_model_uri,
+                output_model_registry_key=output_model_registry_key,
+                output_model_version=output_model_version,
+                output_model_alias=output_model_alias,
+                output_model_uri=output_model_uri,
             )
         )
+
 
     create_queued = enqueue
 
@@ -1241,6 +1270,37 @@ class TrainingJobStore:
             raise InvalidTrainingJobUpdate(task_id, current.state if current else None)
         if status != 1:
             raise TrainingJobStoreError("Redis rejected training-job progress update")
+        return _decode_job(payload)
+
+    def patch(
+        self,
+        task_id: str,
+        updates: Mapping[str, Any],
+        *,
+        at: datetime | None = None,
+        expected_state: TrainingJobState | str | None = None,
+    ) -> TrainingJob:
+        """Patch fields on an active job record without changing lifecycle state."""
+        now = self._now(at)
+        field_updates: dict[str, Any] = {"heartbeat_at": now}
+        field_updates.update(updates)
+        expected = "" if expected_state is None else self._state(expected_state).value
+        reply = self._eval(
+            _PATCH_SCRIPT,
+            (self.job_key(task_id),),
+            (
+                expected,
+                _format_datetime(now),
+                self._update_payload(field_updates),
+                _TERMINAL_JSON,
+            ),
+        )
+        status, payload = _script_result(reply)
+        if status == 0:
+            raise TrainingJobNotFound(task_id)
+        if status in (-1, -2):
+            current = _decode_job(payload) if payload not in (None, "", b"") else None
+            raise InvalidTrainingJobUpdate(task_id, current.state if current else None)
         return _decode_job(payload)
 
     heartbeat = update_progress
