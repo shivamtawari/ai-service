@@ -2,8 +2,17 @@
 
 ## Status
 
-Planning started 2026-08-11. Repository inspection is complete; no branch
-history or working-tree changes have been made by this plan.
+Planning started 2026-08-11. Repository inspection and the preservation
+checkpoint are complete. PR rebasing and PR creation remain intentionally
+deferred.
+
+Checkpoint commits pushed 2026-08-11:
+
+- `ai-service`: `d2378ec`
+- `backend`: `b159ea2`
+- `frontend-react`: `a6f2fe9`
+- `iquana-toolbox`: existing pushed contract commit `c2be767`
+- `iquana-service-core`: existing checkpoint branch advanced to `6866915`
 
 ## Objective
 

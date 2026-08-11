@@ -18,6 +18,35 @@ recorded Phase 4 boundary and recommends the persistence/replacement phase;
 the current branches and dirty edits still require a final scope and
 verification pass before PR creation.
 
+## Checkpoint phase boundary — completed 2026-08-11
+
+The hierarchy work was saved to the existing personal-fork branches without
+rebasing onto newer official commits:
+
+| Repository | Branch | Commit | Result |
+| --- | --- | --- | --- |
+| `ai-service` | `feat/hierarchy-aware-instance-training-ai` | `d2378ec` | pushed to `origin` |
+| `backend` | `feat/hierarchy-aware-instance-training-backend` | `b159ea2` | pushed to `origin` |
+| `frontend-react` | `feat/hierarchy-aware-instance-training-frontend` | `a6f2fe9` | pushed to `origin` |
+| `iquana-toolbox` | `feat/hierarchy-aware-instance-training-contract` | `c2be767` | already present on `personal` |
+| `iquana-service-core` | `checkpoint/instance-segmentation-2026-07-31` | `6866915` | pushed to `origin` |
+
+The two PR-plan files were copied into `ai-service/docs/hierarchy-instance-segmentation/`.
+Generated/runtime files were intentionally excluded: `mlflow.db`, `app.db`,
+`backend/mlruns/`, `frontend-react/src/setupProxy.js`, and Python bytecode.
+
+Verification recorded:
+
+- Toolbox focused tests: 29 passed, with deprecation/user warnings.
+- Frontend test suite: 8 suites and 37 tests passed.
+- AI-service tests: not completed because the environment lacked the dev
+  dependency set and could not download `ipykernel` after DNS/network failure.
+- Backend focused tests: the multi-file run hung without output and was
+  interrupted with exit 130; no pass is claimed.
+
+Remaining work is the deferred upstream refresh/rebase, dependency-release
+decision, full validation, and PR opening.
+
 ## Phase 1 — checkpoint and scope freeze
 
 Status: pending execution.
