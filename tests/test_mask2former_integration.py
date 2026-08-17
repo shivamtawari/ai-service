@@ -298,7 +298,7 @@ print("PHASE6B_RESULT=" + json.dumps({
             "CUDA_VISIBLE_DEVICES": "",
             "HF_DATASETS_OFFLINE": "1",
             "HF_HUB_OFFLINE": "1",
-            "PYTHONPATH": "",
+            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
             "TRANSFORMERS_OFFLINE": "1",
             "UV_OFFLINE": "1",
         }
