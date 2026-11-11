@@ -1,9 +1,10 @@
 # Cellpose-SAM polyp inference
 
-The experimental provider is registered as `cpsam_polyp_v3_b_seed17` for the
-`instance-segmentation` task. It proposes editable polyp contours; the existing
-preview workflow persists them only after user acceptance. The backend supplies
-the selected dataset label as `request.label`, so the provider does not assume a
+The provider is registered as `cpsam_polyp_v3_b_seed17` for the
+`instance-segmentation` task. In Segment labels, select the provider and target
+dataset label, then run it to save ordinary editable Objects directly under that
+label. There is no separate preview-acceptance step. The backend supplies the
+selected dataset label as `request.label`; the provider does not assume a
 benchmark category ID.
 
 ## Runtime and weights
@@ -44,13 +45,6 @@ and a worker serializes Cellpose inference to bound GPU memory use. Its cache
 identity is the resolved checkpoint path, verified SHA-256, and selected
 device. Restart workers after changing any of those settings; predictions
 themselves are not cached.
-
-The verified checkpoint was strictly loaded on CPU with the trained
-`(1, 80, 80, 1024)` positional grid. A real inference comparison was not run:
-the development host exposes CUDA driver version 12.6 (12060), which cannot
-initialize the locked CUDA 13.0 runtime, and the toaster GPUs were assigned to
-active training jobs during verification. No latency or GPU-output claim is
-made from the CPU load check.
 
 ## Prediction behavior
 
