@@ -1,4 +1,4 @@
-# Provisional Cellpose-SAM polyp inference
+# Cellpose-SAM polyp inference
 
 The experimental provider is registered as `cpsam_polyp_v3_b_seed17` for the
 `instance-segmentation` task. It proposes editable polyp contours; the existing
@@ -7,6 +7,12 @@ the selected dataset label as `request.label`, so the provider does not assume a
 benchmark category ID.
 
 ## Runtime and weights
+
+The private checkpoint is hosted at
+[`iquana/iquana-cellpose-sam-polyp`](https://huggingface.co/iquana/iquana-cellpose-sam-polyp).
+Use the [HF deployment setup command](../README.md#polyp-model-checkpoints-from-hugging-face)
+to download a pinned revision, verify its hash and generate checkpoint environment
+variables before starting the service. Manual local checkpoint paths remain supported.
 
 Install the pinned optional inference dependency in the AI service environment:
 

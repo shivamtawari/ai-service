@@ -14,6 +14,16 @@ def _configured_checkpoint(tmp_path, monkeypatch):
     monkeypatch.setenv(yolo.CHECKPOINT_ENV, str(tmp_path / "yolo_C_seed1.pt"))
 
 
+def test_configuration_preserves_pt_snapshot_symlink(tmp_path, monkeypatch):
+    blob = tmp_path / "blob-without-extension"
+    blob.write_bytes(b"test")
+    snapshot = tmp_path / "yolo_polyp_finetuned.pt"
+    snapshot.symlink_to(blob)
+    monkeypatch.setenv(yolo.CHECKPOINT_ENV, str(snapshot))
+    path, _ = yolo._configuration()
+    assert path == str(snapshot)
+
+
 def fake_model(monkeypatch, masks, scores):
     model = yolo.YoloPolyp()
     calls = []

@@ -207,12 +207,17 @@ def predict_concept(model, request, params, model_tags=None):
     hw = image.shape[:2]
     regions = _regions(raw, hw)
     contours, instances, runs = [], [], []
-    native = (model_tags or {}).get("hierarchy_input") == "parent_regions"
+    native = (model_tags or {}).get("hierarchy_input") in ("parent_regions", "whole_image") or (
+        (model_tags or {}).get("architecture") == "Mask2Former"
+    ) or ((model_tags or {}).get("base_model_registry_key") == "mask2former")
     if native:
-        if task != "instance-suggestion":
-            raise ValueError("Native parent_regions hierarchy requires an instance-suggestion provider.")
-        local = _request(request, task, image, clean,
-                         parent_regions=[BinaryMask.from_numpy_array(m) for _, m in regions])
+        if task == "instance-suggestion":
+            local = _request(request, task, image, clean,
+                             parent_regions=[BinaryMask.from_numpy_array(m) for _, m in regions])
+        elif task == "instance-segmentation":
+            local = _request(request, task, image, clean)
+        else:
+            raise ValueError(f"Native whole-image hierarchy is not supported for task {task}.")
         detections, metadata = _detections(_predict(model, local, clean), hw)
         for i, (mask, payload, instance) in enumerate(detections):
             if mask.shape != hw:
@@ -227,6 +232,8 @@ def predict_concept(model, request, params, model_tags=None):
         runs.append({"parent_ids": [p for p, _ in regions], "prediction_metadata": {
             k: v for k, v in metadata.items() if k != "instances"}})
     else:
+        max_parent_iou = clean.get("max_parent_iou", None if task == "instance-segmentation" else 0.8)
+        min_inside_frac = clean.get("min_inside_frac", 0.5)
         for parent_id, region in regions:
             crop = hierarchy_ops.focus_crop(image, region)
             updates = {}
@@ -249,7 +256,11 @@ def predict_concept(model, request, params, model_tags=None):
                     if not masks:
                         continue
                     mask = masks[0]
-                full, _ = hierarchy_ops.paste_back([mask], crop, hw)
+                full, _ = hierarchy_ops.paste_back(
+                    [mask], crop, hw,
+                    min_inside_frac=min_inside_frac,
+                    max_parent_iou=max_parent_iou,
+                )
                 if not full:
                     continue
                 result, info = _serialize(full[0], payload, instance, parent_id, i, request)

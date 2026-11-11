@@ -509,7 +509,7 @@ class CellposePolyp(InstanceSegmentation, CapabilityModel):
         registry_key=MODEL_KEY,
         name=MODEL_NAME,
         description=(
-            "Provisional experimental Cellpose-SAM polyp model, trained as run B with seed 17. "
+            "Fine-tuned Cellpose-SAM model for coral polyp instance segmentation. "
             "Predictions are editable suggestions and are returned in native image coordinates."
         ),
         usage_tip=(
@@ -524,12 +524,12 @@ class CellposePolyp(InstanceSegmentation, CapabilityModel):
             # Accepts saved outlines as `parent_regions` (native COCO RLEs) to bound
             # inference; the backend and frontend read this instead of model keys.
             "roi_input": "parent_regions",
+            "display_name": MODEL_NAME,
             "maturity": "provisional",
             "pretrained": "true",
             "finetunable": "false",
             "domain": "colonoscopy",
             "architecture": "Cellpose-SAM",
-            "model_version": "v3_B_seed17",
             "default_checkpoint_sha256": EXPECTED_CHECKPOINT_SHA256,
         },
         status=runtime_status(CHECKPOINT_ENV, "cellpose"),

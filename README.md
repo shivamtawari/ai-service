@@ -181,6 +181,51 @@ Run the tests with `uv run pytest tests/ -q`.
 
 Read from the environment via a project `.env` (see `paths.py`).
 
+### Polyp model checkpoints from Hugging Face
+
+Cellpose-SAM and YOLO polyp weights are hosted in the private
+[`iquana/iquana-cellpose-sam-polyp`](https://huggingface.co/iquana/iquana-cellpose-sam-polyp)
+and [`iquana/iquana-yolo-polyp`](https://huggingface.co/iquana/iquana-yolo-polyp)
+repositories. The service loads local files; do not put HF URLs in the checkpoint
+path variables. Run this setup once before starting the service:
+
+```bash
+# Use the deployment's compatible AI-service environment, with the
+# cellpose-polyp and yolo-polyp extras installed.
+# Authenticate with read access to both repositories: HF_ACCESS_TOKEN,
+# HF_TOKEN, or an existing `hf auth login`. Keep tokens in deployment secrets.
+python -m download_polyp_weights \
+  --cache-dir /srv/iquana/model-cache \
+  --env-file /srv/iquana/polyp-weights.env
+source /srv/iquana/polyp-weights.env
+# Start the AI service and its workers in this configured environment.
+```
+
+Choose writable deployment paths for the cache and output file. The command pins
+exact HF commits, verifies both SHA-256 hashes, and writes only checkpoint paths
+and the Cellpose digest to the shell file; it does not store the token. Existing
+configuration is preserved if a download or integrity check fails. Repeated runs
+reuse the Hub cache; `--local-files-only` verifies cached weights without network
+access. Retain the cache on persistent storage.
+
+For containers, mount that cache at the **same absolute path** used during setup,
+and pass the generated variables into the AI-service and worker containers.
+For systemd or another process manager, configure the equivalent environment
+variables on the services; this shell file uses `export` statements and is not a
+Docker `--env-file` or systemd `EnvironmentFile`. Do not commit the generated file.
+An HF token pushed through the running service's admin API does not configure
+this separate setup process: provide deployment credentials before running it.
+
+Existing manually configured checkpoint paths still work. No download occurs
+during model discovery or inference. Until the optional dependency and local file
+are configured, the provider remains `not_ready`. Restart after setup, then map
+model class `polyp` to the dataset label (for example, `Coral Polyp`) and select
+the model in Segment settings. Website users need no individual HF credentials.
+
+The pinned artifacts are `cpsam_best` and `yolo_polyp_finetuned.pt`.
+See [Cellpose setup](docs/cellpose-polyp.md) and [YOLO setup](docs/yolo-polyp.md)
+for device selection and inference behavior.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `MLFLOW_URL` | `http://localhost:5000` | Model registry and experiment tracking |

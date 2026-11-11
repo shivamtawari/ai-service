@@ -451,3 +451,29 @@ def test_hierarchy_keeps_provider_required_positive_validation(scene, negative_o
     with pytest.raises(ValueError, match="requires at least 1 instance conditioning"):
         predict_concept(pyfunc(RequiredSuggestion()), req,
                         {**req.parameters, "task": "instance-suggestion"})
+
+
+def test_instance_segmentation_whole_image_hierarchy(scene):
+    req = request("instance-segmentation", scene, label={
+        "id": 43, "dataset_id": 1, "name": "Coral Surface", "value": 3})
+
+    calls = []
+    def predict(local, params):
+        calls.append(local)
+        assert local.image.shape == scene[0].shape
+        h, w = local.image.shape[:2]
+        d1 = np.zeros((h, w), bool)
+        d1[15:45, 15:65] = True
+        d2 = np.zeros((h, w), bool)
+        d2[70:100, 170:210] = True
+        c1 = Contour.from_binary_mask(d1, label_id=43, confidence=0.95)
+        c2 = Contour.from_binary_mask(d2, label_id=43, confidence=0.92)
+        return [c1, c2]
+
+    result = predict_concept(SimpleNamespace(predict=predict), req,
+                             {**req.parameters, "task": "instance-segmentation"},
+                             {"hierarchy_input": "whole_image"})
+    assert len(calls) == 1
+    assert len(result["contours"]) == 2
+    assert {c["parent_id"] for c in result["contours"]} == {101, 102}
+

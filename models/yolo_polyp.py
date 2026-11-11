@@ -116,8 +116,10 @@ def suppress_duplicate_instances(
 def _configuration():
     checkpoint = configured_checkpoint(CHECKPOINT_ENV)
     if checkpoint is None:
-        raise FileNotFoundError(f"Set {CHECKPOINT_ENV} to the YOLO C seed 1 checkpoint; there is no default path.")
-    path = checkpoint.resolve()
+        raise FileNotFoundError(f"Set {CHECKPOINT_ENV} to the fine-tuned YOLO polyp checkpoint; there is no default path.")
+    # HF snapshots symlink to extensionless cache blobs. Ultralytics needs the
+    # original .pt filename to select its loader, so preserve the snapshot path.
+    path = checkpoint.absolute()
     device = os.environ.get(DEVICE_ENV, "cuda:0").strip().lower()
     if device == "cuda":
         device = "cuda:0"
@@ -130,12 +132,12 @@ def _configuration():
 class YoloPolyp(InstanceSegmentation, CapabilityModel):
     model_info = InstanceSegmentationModelInfo(
         registry_key=MODEL_KEY, name=MODEL_NAME,
-        description="Trained YOLO11m-seg C seed 1 polyp masks, using native 640/128 tiles.",
+        description="Fine-tuned YOLO11m-seg model for coral polyp instance segmentation.",
         usage_tip="Run on selected saved coral outlines or explicitly choose Whole image.",
         classes=[ModelClass(key="polyp", name="Polyp")],
         tags={"status": runtime_status(CHECKPOINT_ENV, "ultralytics"), "roi_input": "parent_regions",
               "maturity": "provisional", "pretrained": "true",
-              "finetunable": "false", "architecture": "YOLO11m-seg", "model_version": "v3_C_seed1",
+              "finetunable": "false", "architecture": "YOLO11m-seg", "display_name": MODEL_NAME,
               "default_checkpoint_sha256": EXPECTED_CHECKPOINT_SHA256},
         status=runtime_status(CHECKPOINT_ENV, "ultralytics"), trainable=False,
         input_contracts=[InputContract(
@@ -167,9 +169,9 @@ class YoloPolyp(InstanceSegmentation, CapabilityModel):
                 return
             path = Path(identity[0])
             if not path.is_file():
-                raise FileNotFoundError(f"YOLO C seed 1 checkpoint missing: {path}. Set {CHECKPOINT_ENV}.")
+                raise FileNotFoundError(f"YOLO polyp checkpoint missing: {path}. Set {CHECKPOINT_ENV}.")
             if _sha256(path) != EXPECTED_CHECKPOINT_SHA256:
-                raise RuntimeError("YOLO C seed 1 checkpoint SHA-256 mismatch; stock weights are never substituted.")
+                raise RuntimeError("YOLO polyp checkpoint SHA-256 mismatch; stock weights are never substituted.")
             try:
                 version = importlib.metadata.version("ultralytics")
             except importlib.metadata.PackageNotFoundError as exc:
